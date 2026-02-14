@@ -35,7 +35,7 @@ function calculateCosts(session) {
   
   return participants.map(order => {
     const itemsTotal = order.items.reduce((sum, item) => 
-      sum + (item.price * item.quantity), 0
+      sum + (item.unavailable ? 0 : (item.price * item.quantity)), 0
     );
     
     return {
@@ -226,6 +226,75 @@ app.delete('/api/sessions/:id', (req, res) => {
   } else {
     res.status(404).json({ error: 'Session not found' });
   }
+});
+
+// Update delivery fee
+app.patch('/api/sessions/:id/delivery-fee', (req, res) => {
+  const session = sessions.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  const { deliveryFee } = req.body;
+  const parsed = parseFloat(deliveryFee);
+  if (isNaN(parsed) || parsed < 0) {
+    return res.status(400).json({ error: 'Delivery fee must be a non-negative number' });
+  }
+
+  session.deliveryFee = parsed;
+
+  io.to(req.params.id).emit('session-updated', {
+    orders: session.orders,
+    costs: calculateCosts(session),
+    deliveryFee: session.deliveryFee
+  });
+
+  res.json({ success: true, deliveryFee: parsed });
+});
+
+// Delete a participant's order
+app.delete('/api/sessions/:id/orders/:name', (req, res) => {
+  const session = sessions.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  const name = decodeURIComponent(req.params.name);
+  const idx = session.orders.findIndex(o => o.participantName === name);
+  if (idx < 0) return res.status(404).json({ error: 'Order not found' });
+
+  session.orders.splice(idx, 1);
+
+  io.to(req.params.id).emit('session-updated', {
+    orders: session.orders,
+    costs: calculateCosts(session)
+  });
+
+  res.json({ success: true });
+});
+
+// Edit a participant's order (host can modify items)
+app.put('/api/sessions/:id/orders/:name', (req, res) => {
+  const session = sessions.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  const name = decodeURIComponent(req.params.name);
+  const order = session.orders.find(o => o.participantName === name);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+
+  const { items } = req.body;
+  if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
+
+  // Update items — each item can have an `unavailable` flag
+  order.items = items.map(i => ({
+    name: (i.name || '').trim(),
+    price: Number(i.price) || 0,
+    quantity: parseInt(i.quantity) || 1,
+    unavailable: !!i.unavailable
+  })).filter(i => i.name);
+
+  io.to(req.params.id).emit('session-updated', {
+    orders: session.orders,
+    costs: calculateCosts(session)
+  });
+
+  res.json({ success: true });
 });
 
 // Socket.io

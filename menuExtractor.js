@@ -79,7 +79,7 @@ export async function extractMenuFromImage(imagePath) {
   const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
   const mimeType = mimeMap[ext] || 'image/jpeg';
 
-  const result = await model.generateContent([
+  const parts = [
     EXTRACTION_PROMPT,
     {
       inlineData: {
@@ -87,7 +87,25 @@ export async function extractMenuFromImage(imagePath) {
         mimeType
       }
     }
-  ]);
+  ];
+
+  // Retry with exponential backoff for 500/429 errors
+  let result;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      result = await model.generateContent(parts);
+      break;
+    } catch (err) {
+      const status = err.status || err.httpStatusCode;
+      if ((status === 429 || status === 500 || status === 503) && attempt < 3) {
+        const delay = attempt * 3000;
+        console.log(`  Gemini error ${status}, retrying in ${delay / 1000}s (attempt ${attempt}/3)...`);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
 
   const response = result.response;
   const text = response.text();
@@ -179,30 +197,45 @@ export async function extractMenuFromUrls(imageUrls) {
     }))
   ];
 
-  const result = await model.generateContent(parts);
-  const text = result.response.text();
+  // Retry with backoff for rate limits
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      if (attempt > 0) {
+        const delay = (attempt * 20) * 1000; // 20s, 40s
+        console.log(`  Gemini rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/3)...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+      const result = await model.generateContent(parts);
+      const text = result.response.text();
 
-  let jsonText = text;
-  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (jsonMatch) jsonText = jsonMatch[1];
+      let jsonText = text;
+      const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) jsonText = jsonMatch[1];
 
-  const parsed = JSON.parse(jsonText.trim());
+      const parsed = JSON.parse(jsonText.trim());
 
-  if (!parsed.items || !Array.isArray(parsed.items)) {
-    throw new Error('AI response missing items array');
+      if (!parsed.items || !Array.isArray(parsed.items)) {
+        throw new Error('AI response missing items array');
+      }
+
+      return {
+        items: parsed.items.map(item => ({
+          name: String(item.name || '').trim(),
+          category: String(item.category || 'Uncategorized').trim(),
+          variants: (item.variants || []).map(v => ({
+            label: String(v.label || 'default').trim(),
+            price: Number(v.price) || 0
+          })).filter(v => v.label)
+        })).filter(item => item.name),
+        source: parsed.source || 'unknown'
+      };
+    } catch (err) {
+      lastError = err;
+      if (err.status !== 429 && !err.message?.includes('429')) break;
+    }
   }
-
-  return {
-    items: parsed.items.map(item => ({
-      name: String(item.name || '').trim(),
-      category: String(item.category || 'Uncategorized').trim(),
-      variants: (item.variants || []).map(v => ({
-        label: String(v.label || 'default').trim(),
-        price: Number(v.price) || 0
-      })).filter(v => v.label)
-    })).filter(item => item.name),
-    source: parsed.source || 'unknown'
-  };
+  throw lastError || new Error('Failed after retries');
 }
 
 /**

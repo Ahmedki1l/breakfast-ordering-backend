@@ -226,6 +226,99 @@ router.post('/api/admin/restaurants/:id/extract-menu-from-photos', async (req, r
   }
 });
 
+// Fetch structured menu from Google Places REST API (businessMenus field)
+router.post('/api/admin/restaurants/:id/fetch-google-menu', async (req, res) => {
+  const restaurants = loadRestaurants();
+  const restaurant = restaurants.find(r => r.id === req.params.id);
+  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+
+  const { placeId } = req.body;
+  if (!placeId) return res.status(400).json({ error: 'placeId is required' });
+
+  const gmapsKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!gmapsKey) return res.status(500).json({ error: 'GOOGLE_MAPS_API_KEY not set' });
+
+  try {
+    console.log(`Fetching businessMenus for place: ${placeId}`);
+    const apiUrl = `https://places.googleapis.com/v1/places/${placeId}`;
+    const response = await fetch(apiUrl, {
+      headers: {
+        'X-Goog-FieldMask': 'foodMenus',
+        'X-Goog-Api-Key': gmapsKey,
+        'Referer': process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}/`,
+      }
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Places API error:', response.status, errText);
+      return res.status(response.status).json({ error: `Places API error: ${response.status}`, details: errText });
+    }
+
+    const data = await response.json();
+    console.log('Places API response:', JSON.stringify(data, null, 2));
+
+    // Parse the foodMenus/businessMenus structure into our menu item format
+    const items = [];
+    const menus = data.foodMenus || data.businessMenus || [];
+    
+    for (const menu of menus) {
+      const sections = menu.sections || menu.menuSections || [];
+      for (const section of sections) {
+        const categoryName = section.displayName?.text || section.sectionName || 'Uncategorized';
+        const menuItems = section.items || section.menuItems || [];
+        for (const item of menuItems) {
+          const itemName = item.displayName?.text || item.itemName || '';
+          if (!itemName) continue;
+
+          const variants = [];
+          // Check for price
+          const price = item.price;
+          if (price) {
+            variants.push({
+              label: 'default',
+              price: parseFloat(price.units || 0) + parseFloat(price.nanos || 0) / 1e9
+            });
+          }
+          // Check for options/variants
+          const options = item.options || item.menuItemOptions || [];
+          for (const opt of options) {
+            const optName = opt.displayName?.text || opt.optionName || 'default';
+            const optPrice = opt.price;
+            if (optPrice) {
+              variants.push({
+                label: optName,
+                price: parseFloat(optPrice.units || 0) + parseFloat(optPrice.nanos || 0) / 1e9
+              });
+            }
+          }
+
+          if (variants.length === 0) {
+            variants.push({ label: 'default', price: 0 });
+          }
+
+          items.push({
+            id: nanoid(6),
+            name: itemName,
+            category: categoryName,
+            variants
+          });
+        }
+      }
+    }
+
+    res.json({
+      items,
+      source: items.length > 0 ? 'google_menu' : 'none',
+      rawMenus: menus.length,
+      rawData: data
+    });
+  } catch (err) {
+    console.error('Fetch Google menu error:', err);
+    res.status(500).json({ error: 'Failed to fetch Google menu: ' + err.message });
+  }
+});
+
 // Save menu items (replaces entire menu)
 router.put('/api/admin/restaurants/:id/menu-items', (req, res) => {
   const restaurants = loadRestaurants();

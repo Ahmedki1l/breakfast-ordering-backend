@@ -1,12 +1,245 @@
 [
   {
-    "id": "5Cq8By72",
+    "id": "2BkEfx0i",
     "name": "طاسة جملي",
     "address": "١٨٤ ش Joseph Tito St, Huckstep, El Nozha, Cairo Governorate 4475001, Egypt",
     "googleMapsUrl": "https://maps.google.com/?cid=6435114444918097445&g_mp=CiVnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLkdldFBsYWNlEAIYASAA&hl=en-US&source=apiv3",
     "phone": "010 05454651",
-    "menuImages": [],
-    "menuItems": [],
-    "createdAt": "2026-02-14T14:36:33.113Z"
+    "menuImages": [
+      "menu-DtwkAz_J.png"
+    ],
+    "menuItems": [
+      {
+        "id": "QfFZIt",
+        "name": "كبدة صافي",
+        "category": "Main",
+        "variants": [
+          {
+            "label": "¼ كيلو",
+            "price": 250
+          },
+          {
+            "label": "⅓ كيلو",
+            "price": 375
+          },
+          {
+            "label": "½ كيلو",
+            "price": 500
+          },
+          {
+            "label": "¾ كيلو",
+            "price": 750
+          },
+          {
+            "label": "كيلو",
+            "price": 1000
+          }
+        ]
+      },
+      {
+        "id": "GKCFBm",
+        "name": "كبدة مشكل (كبدة + قلب + كلاوي)",
+        "category": "Main",
+        "variants": [
+          {
+            "label": "¼ كيلو",
+            "price": 205
+          },
+          {
+            "label": "⅓ كيلو",
+            "price": 310
+          },
+          {
+            "label": "½ كيلو",
+            "price": 410
+          },
+          {
+            "label": "¾ كيلو",
+            "price": 610
+          },
+          {
+            "label": "كيلو",
+            "price": 810
+          }
+        ]
+      },
+      {
+        "id": "8K2KAF",
+        "name": "لحمة أو سجق",
+        "category": "Main",
+        "variants": [
+          {
+            "label": "¼ كيلو",
+            "price": 175
+          },
+          {
+            "label": "⅓ كيلو",
+            "price": 265
+          },
+          {
+            "label": "½ كيلو",
+            "price": 330
+          },
+          {
+            "label": "¾ كيلو",
+            "price": 505
+          },
+          {
+            "label": "كيلو",
+            "price": 650
+          }
+        ]
+      },
+      {
+        "id": "q2UDRE",
+        "name": "كفته",
+        "category": "Main",
+        "variants": [
+          {
+            "label": "⅓ كيلو",
+            "price": 250
+          },
+          {
+            "label": "½ كيلو",
+            "price": 330
+          },
+          {
+            "label": "¾ كيلو",
+            "price": 485
+          },
+          {
+            "label": "كيلو",
+            "price": 630
+          }
+        ]
+      },
+      {
+        "id": "fRSwMU",
+        "name": "المشنكاح (نخاع + مخاصي)",
+        "category": "Main",
+        "variants": [
+          {
+            "label": "¼ كيلو",
+            "price": 150
+          },
+          {
+            "label": "½ كيلو",
+            "price": 280
+          },
+          {
+            "label": "¾ كيلو",
+            "price": 420
+          },
+          {
+            "label": "كيلو",
+            "price": 560
+          }
+        ]
+      },
+      {
+        "id": "o9qjki",
+        "name": "طاسة جملى (كبدة + قلب + كلاوي + سجق + لحمه + كفته)",
+        "category": "Main",
+        "variants": [
+          {
+            "label": "⅓ كيلو",
+            "price": 415
+          },
+          {
+            "label": "¾ كيلو",
+            "price": 665
+          },
+          {
+            "label": "كيلو",
+            "price": 830
+          }
+        ]
+      }
+    ],
+    "createdAt": "2026-02-14T15:13:44.352Z"
+  },
+  {
+    "id": "M7qUEJDj",
+    "name": "Koshary El-Medan",
+    "address": "598J+3XQ, Kafr El-Basha, El Marg, Cairo Governorate 4625341, Egypt",
+    "googleMapsUrl": "https://maps.google.com/?cid=7301501907609428511&g_mp=CiVnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLkdldFBsYWNlEAIYASAA&hl=en-US&source=apiv3",
+    "phone": "010 93680400",
+    "menuImages": [
+      "menu-lW_aUCpl.png"
+    ],
+    "menuItems": [
+      {
+        "id": "hUyPme",
+        "name": "ميكسات الميدان",
+        "category": "ميكسات الميدان",
+        "variants": [
+          {
+            "label": "ربع فراخ - ثمن كفتة - أرز - سلطة - عيش",
+            "price": 120
+          },
+          {
+            "label": "ربع فرخة - ربع كفتة - أرز - سلطة - عيش",
+            "price": 150
+          },
+          {
+            "label": "نص فرخة - ثمن كفتة - أرز - سلطة - عيش",
+            "price": 180
+          },
+          {
+            "label": "ربع كباب - ثمن كفتة - ارز - سلطة - عيش",
+            "price": 240
+          },
+          {
+            "label": "ربع كباب - ربع فرخة - ارز - سلطة - عيش",
+            "price": 270
+          }
+        ]
+      },
+      {
+        "id": "Phc9E4",
+        "name": "ركن صواني الميدان",
+        "category": "ركن صواني الميدان",
+        "variants": [
+          {
+            "label": "/٢ فراخ + ٤/١ كفتة + ٤/١ طرب ( سجق + بطاطس + ممبار ) ( أرز بسمتى + سلطة + طحينة + عيش )",
+            "price": 350
+          }
+        ]
+      },
+      {
+        "id": "lyXlDr",
+        "name": "صينية الميدان",
+        "category": "صينية الميدان",
+        "variants": [
+          {
+            "label": "فرد حمام + ۲/۱ فراخ + ٢/١ كفتة + ۲/۱ طرب ( سجق + بطاطس + ممبار ) ( أرز بسمتى + سلطة + طحينة + عيش )",
+            "price": 600
+          }
+        ]
+      },
+      {
+        "id": "6_zG_Z",
+        "name": "وجبة قنبلة الميدان",
+        "category": "وجبة قنبلة الميدان",
+        "variants": [
+          {
+            "label": "شيش طاووق + كفتة + طرب أرز + سلطة + طحينة + عيش",
+            "price": 100
+          }
+        ]
+      },
+      {
+        "id": "JpTIyy",
+        "name": "صنية قنبلة الميدان - العزومة",
+        "category": "صنية قنبلة الميدان",
+        "variants": [
+          {
+            "label": "فرد حمام + ٢/١ فرخة + ٢/١ كفتة + ٢/١ طرب + ممبار أرز بسمتى بالمكس عيش",
+            "price": 1100
+          }
+        ]
+      }
+    ],
+    "createdAt": "2026-02-14T15:25:24.324Z"
   }
 ]

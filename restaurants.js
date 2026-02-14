@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { nanoid } from 'nanoid';
-import { extractMenuFromImage, extractMenuFromUrls } from './menuExtractor.js';
+import { extractMenuFromImage, extractMenuFromUrls, extractMenuFromBase64 } from './menuExtractor.js';
 
 const router = express.Router();
 
@@ -201,6 +201,27 @@ router.post('/api/admin/restaurants/:id/extract-menu-from-urls', async (req, res
     res.json({ items: itemsWithIds, source: result.source });
   } catch (err) {
     console.error('URL menu extraction error:', err);
+    res.status(500).json({ error: 'Failed to extract menu: ' + err.message });
+  }
+});
+
+// Extract menu from base64 images (downloaded in browser)
+router.post('/api/admin/restaurants/:id/extract-menu-from-photos', async (req, res) => {
+  const restaurants = loadRestaurants();
+  const restaurant = restaurants.find(r => r.id === req.params.id);
+  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+
+  const { images } = req.body; // [{ data: base64, mimeType: 'image/jpeg' }]
+  if (!Array.isArray(images) || images.length === 0) {
+    return res.status(400).json({ error: 'images array is required (base64 data)' });
+  }
+
+  try {
+    const result = await extractMenuFromBase64(images);
+    const itemsWithIds = result.items.map(item => ({ ...item, id: nanoid(6) }));
+    res.json({ items: itemsWithIds, source: result.source });
+  } catch (err) {
+    console.error('Photo menu extraction error:', err);
     res.status(500).json({ error: 'Failed to extract menu: ' + err.message });
   }
 });

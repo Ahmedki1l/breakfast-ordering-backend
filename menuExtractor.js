@@ -30,6 +30,38 @@ RULES:
 6. Include ALL items visible in the image
 7. Return ONLY valid JSON, no markdown or extra text`;
 
+const MENU_FROM_PHOTOS_PROMPT = `You are a menu extraction expert. These are photos from a restaurant's Google Maps profile.
+Some photos may be menu images, some may be food photos, and some may be interior/exterior shots.
+
+Your job:
+1. Look at ALL the photos
+2. If any photo shows a MENU (with items and prices), extract ALL items from it
+3. If photos show FOOD DISHES but no menu/prices, try to identify the dish names
+4. Ignore photos that are not food or menu related
+
+Return a JSON object with this EXACT structure:
+{
+  "items": [
+    {
+      "name": "Item Name",
+      "category": "Category Name",
+      "variants": [
+        { "label": "default", "price": 25.00 }
+      ]
+    }
+  ],
+  "source": "menu" or "photos" or "none"
+}
+
+RULES:
+- If you found a menu with prices, set source to "menu"
+- If you could only identify food from photos (no prices), set price to 0 and source to "photos"
+- If no food/menu content found, return {"items": [], "source": "none"}
+- Multiple sizes → multiple variants
+- Extract Arabic and English names as-is
+- Prices must be numbers
+- Return ONLY valid JSON`;
+
 export async function extractMenuFromImage(imagePath) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -103,60 +135,100 @@ export async function extractMenuFromUrls(imageUrls) {
   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   // Download all images in parallel
-  const imagePromises = imageUrls.map(async (url) => {
+  const imagePromises = imageUrls.map(async (url, idx) => {
     try {
-      const response = await fetch(url);
-      if (!response.ok) return null;
+      console.log(`  Downloading photo ${idx + 1}/${imageUrls.length}: ${url.substring(0, 80)}...`);
+      const response = await fetch(url, {
+        redirect: 'follow',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'image/*,*/*',
+          'Referer': process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}/`,
+        }
+      });
+      if (!response.ok) {
+        console.log(`  Photo ${idx + 1} failed: HTTP ${response.status}`);
+        return null;
+      }
       const buffer = await response.arrayBuffer();
-      const base64 = Buffer.from(buffer).toString('base64');
+      if (buffer.byteLength < 1000) {
+        console.log(`  Photo ${idx + 1} too small (${buffer.byteLength} bytes), skipping`);
+        return null;
+      }
       const contentType = response.headers.get('content-type') || 'image/jpeg';
+      console.log(`  Photo ${idx + 1} downloaded: ${(buffer.byteLength / 1024).toFixed(0)}KB, ${contentType}`);
+      const base64 = Buffer.from(buffer).toString('base64');
       return { data: base64, mimeType: contentType.split(';')[0] };
-    } catch {
+    } catch (err) {
+      console.log(`  Photo ${idx + 1} error: ${err.message}`);
       return null;
     }
   });
 
   const images = (await Promise.all(imagePromises)).filter(Boolean);
+  console.log(`  Downloaded ${images.length}/${imageUrls.length} photos successfully`);
 
   if (images.length === 0) {
-    throw new Error('Could not download any images');
+    throw new Error('Could not download any images. The Google Maps photo URLs may require browser authentication.');
   }
 
-  // Build prompt with all images
   const parts = [
-    `You are a menu extraction expert. These are photos from a restaurant's Google Maps profile.
-Some photos may be menu images, some may be food photos, and some may be interior/exterior shots.
-
-Your job:
-1. Look at ALL the photos
-2. If any photo shows a MENU (with items and prices), extract ALL items from it
-3. If photos show FOOD DISHES but no menu/prices, try to identify the dish names
-4. Ignore photos that are not food or menu related
-
-Return a JSON object with this EXACT structure:
-{
-  "items": [
-    {
-      "name": "Item Name",
-      "category": "Category Name",
-      "variants": [
-        { "label": "default", "price": 25.00 }
-      ]
-    }
-  ],
-  "source": "menu" or "photos" or "none"
-}
-
-RULES:
-- If you found a menu with prices, set source to "menu"
-- If you could only identify food from photos (no prices), set price to 0 and source to "photos"
-- If no food/menu content found, return {"items": [], "source": "none"}
-- Multiple sizes → multiple variants
-- Extract Arabic and English names as-is
-- Prices must be numbers
-- Return ONLY valid JSON`,
+    MENU_FROM_PHOTOS_PROMPT,
     ...images.map(img => ({
       inlineData: img
+    }))
+  ];
+
+  const result = await model.generateContent(parts);
+  const text = result.response.text();
+
+  let jsonText = text;
+  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (jsonMatch) jsonText = jsonMatch[1];
+
+  const parsed = JSON.parse(jsonText.trim());
+
+  if (!parsed.items || !Array.isArray(parsed.items)) {
+    throw new Error('AI response missing items array');
+  }
+
+  return {
+    items: parsed.items.map(item => ({
+      name: String(item.name || '').trim(),
+      category: String(item.category || 'Uncategorized').trim(),
+      variants: (item.variants || []).map(v => ({
+        label: String(v.label || 'default').trim(),
+        price: Number(v.price) || 0
+      })).filter(v => v.label)
+    })).filter(item => item.name),
+    source: parsed.source || 'unknown'
+  };
+}
+
+/**
+ * Extract menu from pre-downloaded base64 images.
+ * Images are downloaded in the browser and sent as base64 data.
+ */
+export async function extractMenuFromBase64(images) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not set in environment variables');
+  }
+
+  if (!images || images.length === 0) {
+    throw new Error('No images provided');
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+  const parts = [
+    MENU_FROM_PHOTOS_PROMPT,
+    ...images.map(img => ({
+      inlineData: {
+        data: img.data,
+        mimeType: img.mimeType || 'image/jpeg'
+      }
     }))
   ];
 

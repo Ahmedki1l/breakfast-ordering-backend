@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { nanoid } from 'nanoid';
-import { extractMenuFromImage } from './menuExtractor.js';
+import { extractMenuFromImage, extractMenuFromUrls } from './menuExtractor.js';
 
 const router = express.Router();
 
@@ -180,6 +180,27 @@ router.post('/api/admin/restaurants/:id/extract-menu', async (req, res) => {
     res.json({ items: itemsWithIds });
   } catch (err) {
     console.error('Menu extraction error:', err);
+    res.status(500).json({ error: 'Failed to extract menu: ' + err.message });
+  }
+});
+
+// Extract menu from Google Maps photo URLs
+router.post('/api/admin/restaurants/:id/extract-menu-from-urls', async (req, res) => {
+  const restaurants = loadRestaurants();
+  const restaurant = restaurants.find(r => r.id === req.params.id);
+  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+
+  const { photoUrls } = req.body;
+  if (!Array.isArray(photoUrls) || photoUrls.length === 0) {
+    return res.status(400).json({ error: 'photoUrls array is required' });
+  }
+
+  try {
+    const result = await extractMenuFromUrls(photoUrls);
+    const itemsWithIds = result.items.map(item => ({ ...item, id: nanoid(6) }));
+    res.json({ items: itemsWithIds, source: result.source });
+  } catch (err) {
+    console.error('URL menu extraction error:', err);
     res.status(500).json({ error: 'Failed to extract menu: ' + err.message });
   }
 });

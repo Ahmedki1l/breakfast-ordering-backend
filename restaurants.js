@@ -4,33 +4,18 @@ import path from 'path';
 import fs from 'fs';
 import { nanoid } from 'nanoid';
 import { extractMenuFromImage, extractMenuFromUrls, extractMenuFromBase64 } from './menuExtractor.js';
+import Restaurant from './models/Restaurant.js';
 
 const router = express.Router();
 
-// ============ Data Persistence ============
+// ============ Uploads Directory ============
 const DATA_DIR = path.join(process.cwd(), 'data');
-const DATA_FILE = path.join(DATA_DIR, 'restaurants.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
-// Ensure directories exist
+// Ensure uploads directory exists
 [DATA_DIR, UPLOADS_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
-
-function loadRestaurants() {
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
-    }
-  } catch (e) {
-    console.error('Error loading restaurants:', e.message);
-  }
-  return [];
-}
-
-function saveRestaurants(restaurants) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(restaurants, null, 2), 'utf-8');
-}
 
 // ============ Multer Setup ============
 const storage = multer.diskStorage({
@@ -55,116 +40,149 @@ const upload = multer({
 // ============ Public Routes ============
 
 // List all restaurants (for host dropdown)
-router.get('/api/restaurants', (req, res) => {
-  const restaurants = loadRestaurants();
-  // Return simplified data for the dropdown
-  res.json(restaurants.map(r => ({
-    id: r.id,
-    name: r.name,
-    address: r.address,
-    menuItemCount: r.menuItems?.length || 0
-  })));
+router.get('/api/restaurants', async (req, res) => {
+  try {
+    const restaurants = await Restaurant.find({}, 'id name address menuItems').lean();
+    res.json(restaurants.map(r => ({
+      id: r.id,
+      name: r.name,
+      address: r.address,
+      menuItemCount: r.menuItems?.length || 0
+    })));
+  } catch (err) {
+    console.error('List restaurants error:', err);
+    res.status(500).json({ error: 'Failed to list restaurants' });
+  }
 });
 
 // Get restaurant with full menu
-router.get('/api/restaurants/:id', (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
-  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
-  res.json(restaurant);
+router.get('/api/restaurants/:id', async (req, res) => {
+  try {
+    const restaurant = await Restaurant.findOne({ id: req.params.id }).lean();
+    if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+    res.json(restaurant);
+  } catch (err) {
+    console.error('Get restaurant error:', err);
+    res.status(500).json({ error: 'Failed to get restaurant' });
+  }
 });
 
 // ============ Admin Routes ============
 
 // List all restaurants (full data)
-router.get('/api/admin/restaurants', (req, res) => {
-  res.json(loadRestaurants());
+router.get('/api/admin/restaurants', async (req, res) => {
+  try {
+    const restaurants = await Restaurant.find().lean();
+    res.json(restaurants);
+  } catch (err) {
+    console.error('Admin list restaurants error:', err);
+    res.status(500).json({ error: 'Failed to list restaurants' });
+  }
 });
 
 // Create restaurant
-router.post('/api/admin/restaurants', (req, res) => {
-  const { name, address, googleMapsUrl, phone } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: 'Restaurant name is required' });
+router.post('/api/admin/restaurants', async (req, res) => {
+  try {
+    const { name, address, googleMapsUrl, phone } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Restaurant name is required' });
 
-  const restaurants = loadRestaurants();
-  const restaurant = {
-    id: nanoid(8),
-    name: name.trim(),
-    address: (address || '').trim(),
-    googleMapsUrl: (googleMapsUrl || '').trim(),
-    phone: (phone || '').trim(),
-    menuImages: [],
-    menuItems: [],
-    createdAt: new Date().toISOString()
-  };
+    const restaurant = await Restaurant.create({
+      id: nanoid(8),
+      name: name.trim(),
+      address: (address || '').trim(),
+      googleMapsUrl: (googleMapsUrl || '').trim(),
+      phone: (phone || '').trim(),
+      menuImages: [],
+      menuItems: [],
+    });
 
-  restaurants.push(restaurant);
-  saveRestaurants(restaurants);
-  res.json(restaurant);
+    res.json(restaurant.toObject());
+  } catch (err) {
+    console.error('Create restaurant error:', err);
+    res.status(500).json({ error: 'Failed to create restaurant' });
+  }
 });
 
 // Update restaurant info
-router.put('/api/admin/restaurants/:id', (req, res) => {
-  const restaurants = loadRestaurants();
-  const idx = restaurants.findIndex(r => r.id === req.params.id);
-  if (idx < 0) return res.status(404).json({ error: 'Restaurant not found' });
+router.put('/api/admin/restaurants/:id', async (req, res) => {
+  try {
+    const { name, address, googleMapsUrl, phone } = req.body;
+    const update = {};
+    if (name !== undefined) update.name = name.trim();
+    if (address !== undefined) update.address = address.trim();
+    if (googleMapsUrl !== undefined) update.googleMapsUrl = googleMapsUrl.trim();
+    if (phone !== undefined) update.phone = phone.trim();
 
-  const { name, address, googleMapsUrl, phone } = req.body;
-  if (name !== undefined) restaurants[idx].name = name.trim();
-  if (address !== undefined) restaurants[idx].address = address.trim();
-  if (googleMapsUrl !== undefined) restaurants[idx].googleMapsUrl = googleMapsUrl.trim();
-  if (phone !== undefined) restaurants[idx].phone = phone.trim();
+    const restaurant = await Restaurant.findOneAndUpdate(
+      { id: req.params.id },
+      { $set: update },
+      { new: true }
+    ).lean();
 
-  saveRestaurants(restaurants);
-  res.json(restaurants[idx]);
+    if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+    res.json(restaurant);
+  } catch (err) {
+    console.error('Update restaurant error:', err);
+    res.status(500).json({ error: 'Failed to update restaurant' });
+  }
 });
 
 // Delete restaurant
-router.delete('/api/admin/restaurants/:id', (req, res) => {
-  let restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
-  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+router.delete('/api/admin/restaurants/:id', async (req, res) => {
+  try {
+    const restaurant = await Restaurant.findOne({ id: req.params.id });
+    if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
 
-  // Clean up uploaded images
-  (restaurant.menuImages || []).forEach(img => {
-    const imgPath = path.join(UPLOADS_DIR, img);
-    if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
-  });
+    // Clean up uploaded images
+    (restaurant.menuImages || []).forEach(img => {
+      const imgPath = path.join(UPLOADS_DIR, img);
+      if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    });
 
-  restaurants = restaurants.filter(r => r.id !== req.params.id);
-  saveRestaurants(restaurants);
-  res.json({ success: true });
+    await Restaurant.deleteOne({ id: req.params.id });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete restaurant error:', err);
+    res.status(500).json({ error: 'Failed to delete restaurant' });
+  }
 });
 
 // Upload menu image
-router.post('/api/admin/restaurants/:id/menu-image', upload.single('menuImage'), (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
-  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
-  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+router.post('/api/admin/restaurants/:id/menu-image', upload.single('menuImage'), async (req, res) => {
+  try {
+    const restaurant = await Restaurant.findOne({ id: req.params.id });
+    if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+    if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
 
-  restaurant.menuImages.push(req.file.filename);
-  saveRestaurants(restaurants);
-  res.json({ filename: req.file.filename, restaurant });
+    restaurant.menuImages.push(req.file.filename);
+    await restaurant.save();
+    res.json({ filename: req.file.filename, restaurant: restaurant.toObject() });
+  } catch (err) {
+    console.error('Upload menu image error:', err);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
 });
 
 // Delete menu image
-router.delete('/api/admin/restaurants/:id/menu-image/:filename', (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
-  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+router.delete('/api/admin/restaurants/:id/menu-image/:filename', async (req, res) => {
+  try {
+    const restaurant = await Restaurant.findOne({ id: req.params.id });
+    if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
 
-  const imgPath = path.join(UPLOADS_DIR, req.params.filename);
-  if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
-  restaurant.menuImages = restaurant.menuImages.filter(f => f !== req.params.filename);
-  saveRestaurants(restaurants);
-  res.json({ success: true });
+    const imgPath = path.join(UPLOADS_DIR, req.params.filename);
+    if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    restaurant.menuImages = restaurant.menuImages.filter(f => f !== req.params.filename);
+    await restaurant.save();
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete menu image error:', err);
+    res.status(500).json({ error: 'Failed to delete image' });
+  }
 });
 
 // Extract menu from image using AI
 router.post('/api/admin/restaurants/:id/extract-menu', async (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
+  const restaurant = await Restaurant.findOne({ id: req.params.id });
   if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
 
   const { imageFilename } = req.body;
@@ -175,7 +193,6 @@ router.post('/api/admin/restaurants/:id/extract-menu', async (req, res) => {
 
   try {
     const items = await extractMenuFromImage(imgPath);
-    // Add IDs to extracted items
     const itemsWithIds = items.map(item => ({ ...item, id: nanoid(6) }));
     res.json({ items: itemsWithIds });
   } catch (err) {
@@ -186,8 +203,7 @@ router.post('/api/admin/restaurants/:id/extract-menu', async (req, res) => {
 
 // Extract menu from Google Maps photo URLs
 router.post('/api/admin/restaurants/:id/extract-menu-from-urls', async (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
+  const restaurant = await Restaurant.findOne({ id: req.params.id });
   if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
 
   const { photoUrls } = req.body;
@@ -207,11 +223,10 @@ router.post('/api/admin/restaurants/:id/extract-menu-from-urls', async (req, res
 
 // Extract menu from base64 images (downloaded in browser)
 router.post('/api/admin/restaurants/:id/extract-menu-from-photos', async (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
+  const restaurant = await Restaurant.findOne({ id: req.params.id });
   if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
 
-  const { images } = req.body; // [{ data: base64, mimeType: 'image/jpeg' }]
+  const { images } = req.body;
   if (!Array.isArray(images) || images.length === 0) {
     return res.status(400).json({ error: 'images array is required (base64 data)' });
   }
@@ -226,10 +241,9 @@ router.post('/api/admin/restaurants/:id/extract-menu-from-photos', async (req, r
   }
 });
 
-// Fetch structured menu from Google Places REST API (businessMenus field)
+// Fetch structured menu from Google Places REST API
 router.post('/api/admin/restaurants/:id/fetch-google-menu', async (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
+  const restaurant = await Restaurant.findOne({ id: req.params.id });
   if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
 
   const { placeId } = req.body;
@@ -258,7 +272,6 @@ router.post('/api/admin/restaurants/:id/fetch-google-menu', async (req, res) => 
     const data = await response.json();
     console.log('Places API response:', JSON.stringify(data, null, 2));
 
-    // Parse the foodMenus/businessMenus structure into our menu item format
     const items = [];
     const menus = data.foodMenus || data.businessMenus || [];
     
@@ -272,7 +285,6 @@ router.post('/api/admin/restaurants/:id/fetch-google-menu', async (req, res) => 
           if (!itemName) continue;
 
           const variants = [];
-          // Check for price
           const price = item.price;
           if (price) {
             variants.push({
@@ -280,7 +292,6 @@ router.post('/api/admin/restaurants/:id/fetch-google-menu', async (req, res) => 
               price: parseFloat(price.units || 0) + parseFloat(price.nanos || 0) / 1e9
             });
           }
-          // Check for options/variants
           const options = item.options || item.menuItemOptions || [];
           for (const opt of options) {
             const optName = opt.displayName?.text || opt.optionName || 'default';
@@ -320,63 +331,74 @@ router.post('/api/admin/restaurants/:id/fetch-google-menu', async (req, res) => 
 });
 
 // Save menu items (replaces entire menu)
-router.put('/api/admin/restaurants/:id/menu-items', (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
-  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+router.put('/api/admin/restaurants/:id/menu-items', async (req, res) => {
+  try {
+    const restaurant = await Restaurant.findOne({ id: req.params.id });
+    if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
 
-  const { items } = req.body;
-  if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
+    const { items } = req.body;
+    if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
 
-  // Validate and clean items
-  restaurant.menuItems = items.map(item => ({
-    id: item.id || nanoid(6),
-    name: (item.name || '').trim(),
-    category: (item.category || 'Uncategorized').trim(),
-    variants: (item.variants || []).map(v => ({
-      label: (v.label || 'default').trim(),
-      price: Number(v.price) || 0
-    })).filter(v => v.price > 0)
-  })).filter(item => item.name && item.variants.length > 0);
+    restaurant.menuItems = items.map(item => ({
+      id: item.id || nanoid(6),
+      name: (item.name || '').trim(),
+      category: (item.category || 'Uncategorized').trim(),
+      variants: (item.variants || []).map(v => ({
+        label: (v.label || 'default').trim(),
+        price: Number(v.price) || 0
+      })).filter(v => v.price > 0)
+    })).filter(item => item.name && item.variants.length > 0);
 
-  saveRestaurants(restaurants);
-  res.json(restaurant);
+    await restaurant.save();
+    res.json(restaurant.toObject());
+  } catch (err) {
+    console.error('Save menu items error:', err);
+    res.status(500).json({ error: 'Failed to save menu items' });
+  }
 });
 
 // Add single menu item
-router.post('/api/admin/restaurants/:id/menu-items', (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
-  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+router.post('/api/admin/restaurants/:id/menu-items', async (req, res) => {
+  try {
+    const restaurant = await Restaurant.findOne({ id: req.params.id });
+    if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
 
-  const { name, category, variants } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: 'Item name is required' });
+    const { name, category, variants } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Item name is required' });
 
-  const item = {
-    id: nanoid(6),
-    name: name.trim(),
-    category: (category || 'Uncategorized').trim(),
-    variants: (variants || [{ label: 'default', price: 0 }]).map(v => ({
-      label: (v.label || 'default').trim(),
-      price: Number(v.price) || 0
-    })).filter(v => v.price > 0)
-  };
+    const item = {
+      id: nanoid(6),
+      name: name.trim(),
+      category: (category || 'Uncategorized').trim(),
+      variants: (variants || [{ label: 'default', price: 0 }]).map(v => ({
+        label: (v.label || 'default').trim(),
+        price: Number(v.price) || 0
+      })).filter(v => v.price > 0)
+    };
 
-  if (!restaurant.menuItems) restaurant.menuItems = [];
-  restaurant.menuItems.push(item);
-  saveRestaurants(restaurants);
-  res.json(item);
+    if (!restaurant.menuItems) restaurant.menuItems = [];
+    restaurant.menuItems.push(item);
+    await restaurant.save();
+    res.json(item);
+  } catch (err) {
+    console.error('Add menu item error:', err);
+    res.status(500).json({ error: 'Failed to add menu item' });
+  }
 });
 
 // Delete menu item
-router.delete('/api/admin/restaurants/:id/menu-items/:itemId', (req, res) => {
-  const restaurants = loadRestaurants();
-  const restaurant = restaurants.find(r => r.id === req.params.id);
-  if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+router.delete('/api/admin/restaurants/:id/menu-items/:itemId', async (req, res) => {
+  try {
+    const restaurant = await Restaurant.findOne({ id: req.params.id });
+    if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
 
-  restaurant.menuItems = (restaurant.menuItems || []).filter(i => i.id !== req.params.itemId);
-  saveRestaurants(restaurants);
-  res.json({ success: true });
+    restaurant.menuItems = (restaurant.menuItems || []).filter(i => i.id !== req.params.itemId);
+    await restaurant.save();
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete menu item error:', err);
+    res.status(500).json({ error: 'Failed to delete menu item' });
+  }
 });
 
 // Serve uploaded images

@@ -98,6 +98,66 @@ app.post('/api/sessions', auth, async (req, res) => {
   }
 });
 
+// Active sessions feed (sessions the user hosts or has ordered in)
+app.get('/api/sessions/feed/active', auth, async (req, res) => {
+  try {
+    const sessions = await Session.find({
+      status: 'active',
+      $or: [
+        { host: req.user.id },
+        { 'orders.userId': req.user.id }
+      ]
+    }).sort({ createdAt: -1 }).lean();
+
+    const feed = sessions.map(s => ({
+      sessionId: s.sessionId,
+      hostName: s.hostName,
+      isHost: s.host.toString() === req.user.id,
+      participantCount: s.orders.length,
+      deadline: s.deadline,
+      restaurantId: s.restaurantId,
+      createdAt: s.createdAt,
+    }));
+
+    res.json(feed);
+  } catch (err) {
+    console.error('Feed error:', err);
+    res.status(500).json({ error: 'Failed to fetch feed' });
+  }
+});
+
+// User's order history
+app.get('/api/sessions/history/mine', auth, async (req, res) => {
+  try {
+    const sessions = await Session.find({
+      $or: [
+        { host: req.user.id },
+        { 'orders.userId': req.user.id }
+      ]
+    }).sort({ createdAt: -1 }).limit(20).lean();
+
+    const history = sessions.map(s => {
+      const myOrder = s.orders.find(o => o.userId?.toString() === req.user.id);
+      return {
+        sessionId: s.sessionId,
+        hostName: s.hostName,
+        isHost: s.host.toString() === req.user.id,
+        status: s.status,
+        restaurantId: s.restaurantId,
+        createdAt: s.createdAt,
+        myItems: myOrder?.items || [],
+        myTotal: myOrder ? myOrder.items.reduce((sum, i) => sum + (i.price * (i.quantity || 1)), 0) : 0,
+        paymentSent: myOrder?.paymentSent || false,
+      };
+    });
+
+    res.json(history);
+  } catch (err) {
+    console.error('History error:', err);
+    res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+
 // Get session (public view)
 app.get('/api/sessions/:id', async (req, res) => {
   try {
@@ -345,6 +405,47 @@ app.put('/api/sessions/:id/orders/:name', auth, async (req, res) => {
   } catch (err) {
     console.error('Edit order error:', err);
     res.status(500).json({ error: 'Failed to edit order' });
+  }
+});
+
+// Update session restaurant (host only)
+app.patch('/api/sessions/:id/restaurant', auth, async (req, res) => {
+  try {
+    const session = await Session.findOne({ sessionId: req.params.id });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    if (session.host.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'Only the host can change the restaurant' });
+    }
+
+    const { restaurantId } = req.body;
+
+    // Allow clearing restaurant (set to null)
+    if (restaurantId) {
+      const restaurant = await Restaurant.findOne({ id: restaurantId });
+      if (!restaurant) return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    session.restaurantId = restaurantId || null;
+    await session.save();
+
+    // Broadcast full session update so participants get the new menu
+    const populatedSession = await Session.findOne({ sessionId: req.params.id });
+    let restaurantData = null;
+    if (populatedSession.restaurantId) {
+      restaurantData = await Restaurant.findOne({ id: populatedSession.restaurantId });
+    }
+
+    io.to(req.params.id).emit('session-updated', {
+      orders: populatedSession.orders,
+      costs: calculateCosts(populatedSession),
+      restaurantId: populatedSession.restaurantId,
+      restaurant: restaurantData,
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update restaurant error:', err);
+    res.status(500).json({ error: 'Failed to update restaurant' });
   }
 });
 

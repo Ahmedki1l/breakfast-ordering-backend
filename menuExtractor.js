@@ -23,12 +23,18 @@ RULES:
      { "label": "Medium", "price": 30 },
      { "label": "Large", "price": 40 }
    ]
-2. If an item has only ONE price, use: "variants": [{ "label": "default", "price": 25 }]
-3. Group items by their menu category (Sandwiches, Drinks, Desserts, etc.)
-4. Extract Arabic and English names as-is from the menu
-5. Prices must be numbers, not strings
-6. Include ALL items visible in the image
-7. Return ONLY valid JSON, no markdown or extra text`;
+2. IMPORTANT: If an item comes with different BREAD TYPES (شامي، بلدي، فينو، صاج، كايزر، توست, etc.) at different prices, treat each bread type as a separate variant:
+   "variants": [
+     { "label": "شامي", "price": 15 },
+     { "label": "بلدي", "price": 12 },
+     { "label": "فينو", "price": 18 }
+   ]
+3. If an item has only ONE price and no options, use: "variants": [{ "label": "default", "price": 25 }]
+4. Group items by their menu category (Sandwiches, Drinks, Desserts, etc.)
+5. Extract Arabic and English names as-is from the menu
+6. Prices must be numbers, not strings
+7. Include ALL items visible in the image
+8. Return ONLY valid JSON, no markdown or extra text`;
 
 const MENU_FROM_PHOTOS_PROMPT = `You are a menu extraction expert. These are photos from a restaurant's Google Maps profile.
 Some photos may be menu images, some may be food photos, and some may be interior/exterior shots.
@@ -58,6 +64,7 @@ RULES:
 - If you could only identify food from photos (no prices), set price to 0 and source to "photos"
 - If no food/menu content found, return {"items": [], "source": "none"}
 - Multiple sizes → multiple variants
+- IMPORTANT: If items come with different BREAD TYPES (شامي، بلدي، فينو، صاج، كايزر، توست, etc.) at different prices, treat each bread type as a separate variant
 - Extract Arabic and English names as-is
 - Prices must be numbers
 - Return ONLY valid JSON`;

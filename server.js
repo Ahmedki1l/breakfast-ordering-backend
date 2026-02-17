@@ -12,6 +12,8 @@ import Restaurant from './models/Restaurant.js';
 import restaurantRoutes from './restaurants.js';
 import authRoutes from './routes/auth.js';
 import { auth, optionalAuth } from './middleware/auth.js';
+import User from './models/User.js';
+import { sendPushToUser, sendPushToParticipant, sendPushToAllParticipants, VAPID_PUBLIC_KEY } from './services/pushService.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -29,6 +31,53 @@ app.use(express.json({ limit: '50mb' }));
 app.use('/api/auth', authRoutes);
 app.use(restaurantRoutes);
 
+// ======================== PUSH SUBSCRIPTION ========================
+
+app.get('/api/push/vapid-key', (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY || '' });
+});
+
+app.post('/api/push/subscribe', auth, async (req, res) => {
+  try {
+    const { subscription } = req.body;
+    if (!subscription?.endpoint) return res.status(400).json({ error: 'Invalid subscription' });
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Avoid duplicates
+    const exists = user.pushSubscriptions?.some(s => s.endpoint === subscription.endpoint);
+    if (!exists) {
+      user.pushSubscriptions = user.pushSubscriptions || [];
+      user.pushSubscriptions.push(subscription);
+      await user.save();
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Push subscribe error:', err);
+    res.status(500).json({ error: 'Failed to subscribe' });
+  }
+});
+
+app.delete('/api/push/subscribe', auth, async (req, res) => {
+  try {
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+
+    const user = await User.findById(req.user.id);
+    if (user) {
+      user.pushSubscriptions = (user.pushSubscriptions || []).filter(s => s.endpoint !== endpoint);
+      await user.save();
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Push unsubscribe error:', err);
+    res.status(500).json({ error: 'Failed to unsubscribe' });
+  }
+});
+
 // Helper: Calculate costs
 function calculateCosts(session) {
   const participants = session.orders || [];
@@ -43,13 +92,20 @@ function calculateCosts(session) {
       sum + (item.unavailable ? 0 : (item.price * item.quantity)), 0
     );
     
+    // Backward compat: migrate old paymentSent boolean to new payment object
+    const payment = order.payment?.status
+      ? order.payment
+      : { status: order.paymentSent ? 'paid' : 'pending', method: 'transfer', paidBy: null, confirmedByHost: false, paidAt: null };
+    
     return {
       name: order.participantName,
       itemsTotal,
       deliveryShare: deliveryPerPerson,
       total: itemsTotal + deliveryPerPerson,
       items: order.items,
-      paymentSent: order.paymentSent || false
+      payment,
+      // Keep for backward compat
+      paymentSent: payment.status !== 'pending'
     };
   });
 }
@@ -148,6 +204,7 @@ app.get('/api/sessions/history/mine', auth, async (req, res) => {
         myItems: myOrder?.items || [],
         myTotal: myOrder ? myOrder.items.reduce((sum, i) => sum + (i.price * (i.quantity || 1)), 0) : 0,
         paymentSent: myOrder?.paymentSent || false,
+        payment: myOrder?.payment || { status: 'pending' },
       };
     });
 
@@ -271,7 +328,7 @@ app.post('/api/sessions/:id/orders', auth, async (req, res) => {
   }
 });
 
-// Update payment status
+// Update payment status (enhanced — supports status, method, paidBy)
 app.patch('/api/sessions/:id/orders/:name/payment', auth, async (req, res) => {
   try {
     const session = await Session.findOne({ sessionId: req.params.id });
@@ -280,24 +337,153 @@ app.patch('/api/sessions/:id/orders/:name/payment', auth, async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
     
-    const order = session.orders.find(o => o.participantName === req.params.name);
+    const name = decodeURIComponent(req.params.name);
+    const order = session.orders.find(o => o.participantName === name);
     
-    if (order) {
-      order.paymentSent = req.body.paymentSent;
-      await session.save();
-      
-      io.to(req.params.id).emit('session-updated', {
-        orders: session.orders,
-        costs: calculateCosts(session)
-      });
-      
-      res.json({ success: true });
-    } else {
-      res.status(404).json({ error: 'Order not found' });
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
     }
+
+    const { status, method, paidBy, paymentSent } = req.body;
+    
+    // Support legacy boolean format
+    if (paymentSent !== undefined && !status) {
+      order.payment = {
+        status: paymentSent ? 'paid' : 'pending',
+        method: 'transfer',
+        paidBy: paymentSent ? req.user.name : null,
+        confirmedByHost: false,
+        paidAt: paymentSent ? new Date() : null,
+      };
+      order.paymentSent = paymentSent;
+    } else {
+      order.payment = {
+        status: status || 'paid',
+        method: method || 'transfer',
+        paidBy: paidBy || req.user.name,
+        confirmedByHost: false,
+        paidAt: new Date(),
+      };
+      order.paymentSent = status !== 'pending';
+    }
+    
+    await session.save();
+    
+    io.to(req.params.id).emit('session-updated', {
+      orders: session.orders,
+      costs: calculateCosts(session)
+    });
+    
+    res.json({ success: true });
+
+    // Push notification → notify the host that someone paid
+    sendPushToUser(session.host, {
+      title: '💳 Payment Update',
+      body: `${paidBy || req.user.name} marked payment for ${name}`,
+      url: `/host/${req.params.id}`,
+    }).catch(() => {});
   } catch (err) {
     console.error('Update payment error:', err);
     res.status(500).json({ error: 'Failed to update payment' });
+  }
+});
+
+// Host treats participants (عزمتك / عزمتكم)
+app.post('/api/sessions/:id/treat', auth, async (req, res) => {
+  try {
+    const session = await Session.findOne({ sessionId: req.params.id });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    
+    // Only host can treat
+    if (session.host.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'Only the host can treat participants' });
+    }
+    
+    const { names } = req.body; // 'all' or ['Ahmed', 'Sara']
+    const targetNames = names === 'all'
+      ? session.orders.map(o => o.participantName)
+      : Array.isArray(names) ? names : [names];
+    
+    let treated = 0;
+    for (const order of session.orders) {
+      if (targetNames.includes(order.participantName)) {
+        order.payment = {
+          status: 'treated',
+          method: 'treated',
+          paidBy: session.hostName,
+          confirmedByHost: true,
+          paidAt: new Date(),
+        };
+        order.paymentSent = true;
+        treated++;
+      }
+    }
+    
+    await session.save();
+    
+    io.to(req.params.id).emit('session-updated', {
+      orders: session.orders,
+      costs: calculateCosts(session)
+    });
+    
+    res.json({ success: true, treated });
+
+    // Push notification → notify each treated participant
+    for (const order of session.orders) {
+      if (targetNames.includes(order.participantName) && order.user) {
+        sendPushToUser(order.user, {
+          title: '🎁 عزمتك!',
+          body: `${session.hostName} is treating you! Your payment is covered.`,
+          url: `/join/${req.params.id}`,
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.error('Treat error:', err);
+    res.status(500).json({ error: 'Failed to treat participants' });
+  }
+});
+
+// Host confirms payment received
+app.patch('/api/sessions/:id/orders/:name/confirm', auth, async (req, res) => {
+  try {
+    const session = await Session.findOne({ sessionId: req.params.id });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    
+    if (session.host.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'Only the host can confirm payments' });
+    }
+    
+    const name = decodeURIComponent(req.params.name);
+    const order = session.orders.find(o => o.participantName === name);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    
+    if (!order.payment) {
+      order.payment = { status: 'paid', method: 'transfer', paidBy: name, paidAt: new Date() };
+    }
+    order.payment.confirmedByHost = true;
+    order.paymentSent = true;
+    
+    await session.save();
+    
+    io.to(req.params.id).emit('session-updated', {
+      orders: session.orders,
+      costs: calculateCosts(session)
+    });
+    
+    res.json({ success: true });
+
+    // Push notification → notify the payer that host confirmed
+    if (order.user) {
+      sendPushToUser(order.user, {
+        title: '✅ Payment Confirmed',
+        body: `${session.hostName} confirmed your payment!`,
+        url: `/join/${req.params.id}`,
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.error('Confirm payment error:', err);
+    res.status(500).json({ error: 'Failed to confirm payment' });
   }
 });
 

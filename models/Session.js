@@ -7,10 +7,28 @@ const orderItemSchema = new mongoose.Schema({
   unavailable: { type: Boolean, default: false },
 }, { _id: false });
 
+const paymentSchema = new mongoose.Schema({
+  status: {
+    type: String,
+    enum: ['pending', 'paid', 'cash', 'treated'],
+    default: 'pending',
+  },
+  method: {
+    type: String,
+    enum: ['transfer', 'cash', 'treated'],
+    default: 'transfer',
+  },
+  paidBy: { type: String, default: null, trim: true },
+  confirmedByHost: { type: Boolean, default: false },
+  paidAt: { type: Date, default: null },
+}, { _id: false });
+
 const orderSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   participantName: { type: String, required: true, trim: true },
   items: [orderItemSchema],
+  payment: { type: paymentSchema, default: () => ({}) },
+  // DEPRECATED — kept for backward compat migration
   paymentSent: { type: Boolean, default: false },
   submittedAt: { type: Date, default: Date.now },
 }, { _id: false });

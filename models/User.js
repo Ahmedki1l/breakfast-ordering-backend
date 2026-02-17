@@ -27,6 +27,13 @@ const userSchema = new mongoose.Schema({
   otp: { type: String, default: null },
   otpExpiresAt: { type: Date, default: null },
   isVerified: { type: Boolean, default: false },
+  pushSubscriptions: [{
+    endpoint: String,
+    keys: {
+      p256dh: String,
+      auth: String,
+    },
+  }],
   refreshTokens: [{
     token: String,
     createdAt: { type: Date, default: Date.now },
